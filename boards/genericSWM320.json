@@ -1,0 +1,24 @@
+{
+  "build": {
+    "core": "synwit",
+    "mcu": "swm320",
+    "cpu": "cortex-m4"
+  },
+  "debug": {
+    "jlink_device": "SWM320xE"
+  },
+  "frameworks": [
+    "cmsis"
+  ],
+  "name": "SWM320VE (128k RAM. 512k Flash)",
+  "upload": {
+    "maximum_ram_size": 131072,
+    "maximum_size": 524288,
+    "protocol": "jlink",
+    "protocols": [
+      "jlink"
+    ]
+  },
+  "url": "http://www.synwit.cn/index.html",
+  "vendor": "Generic"
+}

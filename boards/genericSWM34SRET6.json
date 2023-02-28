@@ -1,0 +1,26 @@
+{
+	"build": {
+		"mcu": "swm34sret6",
+		"cpu": "cortex-m33",
+		"series": "swm341",
+		"f_cpu": "108000000L"
+	},
+	"debug": {
+		"jlink_device": "SWM341xE"
+	},
+	"frameworks": [
+		"spl"
+	],
+	"name": "SWM34SRET6 (64k RAM. 512k Flash)",
+	"upload": {
+		"maximum_ram_size": 65536,
+		"maximum_size": 524288,
+		"stack_size": 16384,
+		"protocol": "jlink",
+		"protocols": [
+			"jlink"
+		]
+	},
+	"url": "http://www.synwit.cn/index.html",
+	"vendor": "Generic"
+}
