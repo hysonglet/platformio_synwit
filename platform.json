@@ -31,7 +31,8 @@
 		},
 		"tool-jlink": {
 			"type": "uploader",
-			"version": "^1.63208.0"
+			"owner": "hysonglet",
+			"version": "https://github.com/hysonglet/tool-jlink.git"
 		}
 	}
 }
