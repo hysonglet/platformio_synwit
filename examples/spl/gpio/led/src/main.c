@@ -4,10 +4,11 @@ int main()
 {
 	SystemInit();
 
-	GPIO_Init(GPIOA, PIN5, 1, 0, 0, 0);
+	GPIO_Init(GPIOC, PIN5, 1, 0, 0, 0);
 
 	for(;;){
-		GPIO_SetBit(GPIOA, PIN5);
+		GPIO_SetBit(GPIOC, PIN5);
+		// GPIO_ClrBit(GPIOC, PIN5);
 	}
 	return 0;
 }

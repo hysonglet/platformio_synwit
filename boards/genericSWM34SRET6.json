@@ -6,7 +6,8 @@
 		"f_cpu": "108000000L"
 	},
 	"debug": {
-		"jlink_device": "SWM341xE"
+		"jlink_device": "SWM341xE",
+		"svd_path": "SWM341.svd"
 	},
 	"frameworks": [
 		"spl"
