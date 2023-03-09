@@ -3,7 +3,9 @@
 		"mcu": "swm34sret6",
 		"cpu": "cortex-m33",
 		"series": "swm341",
-		"f_cpu": "108000000L"
+		"f_cpu": "150000000L",
+		"use_minimal_printf": false,
+		"use_printf_float": true
 	},
 	"debug": {
 		"jlink_device": "SWM341xE",

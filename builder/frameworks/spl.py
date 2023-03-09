@@ -32,6 +32,12 @@ board = env.BoardConfig()
 
 env.SConscript("_bare.py")
 
+def get_flag_value(flag_name:str, default_val:bool):
+    flag_val = board.get("build.%s" % flag_name, default_val)
+    flag_val = str(flag_val).lower() in ("1", "yes", "true")
+    return flag_val
+
+
 env.Append(
     LINKFLAGS=["--specs=nosys.specs", "--specs=nano.specs"]
 )
@@ -49,7 +55,7 @@ series = board.get("build.series").lower()
 mcu = board.get('build.mcu').lower() # swm34sret6
 PACK_DIR = ""
 
-print("mcu series:  %s" % series)
+# print("mcu series:  %s" % series)
 # find we need std path
 for dir in os.listdir(ALL_PACK_PATH):
     if dir.lower().startswith(series):
@@ -131,4 +137,18 @@ def get_linker_script(mcu):
 env.Replace(
     LDSCRIPT_PATH=get_linker_script(mcu)
 )
+
+def configure_printf_lib():
+    # allows wrapping of printf functions though, e.g., printf-minimal library.
+    if get_flag_value("use_minimal_printf", False):
+        env.Append(LINKFLAGS=[
+            "-Wl,--wrap,printf",
+            ])
+    if get_flag_value("use_printf_float", False):
+         env.Append(LINKFLAGS=[
+             "-u_printf_float",
+             ])
+
+configure_printf_lib()
+
 
