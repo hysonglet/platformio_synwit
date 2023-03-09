@@ -5,7 +5,7 @@
 
 int main(void)
 {
-    uint32_t cnt = 0;
+    int cnt = 0;
     uart0_init();
     for (;;)
     {
