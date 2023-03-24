@@ -12,16 +12,17 @@
 #define LCD_HEIGHT              272
 
 /* 选择是否软件旋转屏幕 */
-#define LCD_ROTATION            false
+#define LCD_ROTATION            true
 
 static void lcd_draw_pix(uint16_t x, uint16_t y, UG_COLOR color)
 {
     /* lcd format: 565 */
-    uint16_t *lcd_buf = (uint16_t *)LCD_BUFFER;
 #if LCD_ROTATION == true
-    lcd_buf[(LCD_HEIGHT - x) * LCD_WIDTH + y] = (uint16_t)color;
+    //lcd_buf[(LCD_HEIGHT - x) * LCD_WIDTH + y] = (uint16_t)color;
+	lcd_pixel_set_565(LCD_BUFFER, y, x, (uint16_t)color);
 #else
-    lcd_buf[(y * LCD_WIDTH) + x] = (uint16_t)color;
+    //lcd_buf[(y * LCD_WIDTH) + x] = (uint16_t)color;
+	lcd_pixel_set_565(LCD_BUFFER, x, y, (uint16_t)color);
 #endif
 }
 
@@ -47,7 +48,7 @@ int main(void)
     SysTick_Config(F_CPU/1000);
     uart0_init();
     sdram_init();
-    rgb_lcd_init(LCD_BUFFER, 480, 272);
+    rgb_lcd_init(LCD_BUFFER, LCD_WIDTH, LCD_HEIGHT);
 
 #if LCD_ROTATION == true
 	UG_Init(&g_gui,(void(*)(UG_S16,UG_S16,UG_COLOR))lcd_draw_pix, LCD_HEIGHT, LCD_WIDTH);

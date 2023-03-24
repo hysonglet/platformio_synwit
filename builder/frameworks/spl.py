@@ -111,17 +111,24 @@ def get_linker_script(mcu):
         # update always
         # if isfile(ldscript):
         #     return ldscript
-        stack_size = board.get('upload.stack_size', 0x400)
-        rom_size = board.get('upload.maximum_size', 0x80000)
-        ram_size = board.get('upload.maximum_ram_size', 0x10000)
+        stack_size = board.get('build.stack_size', 0x400)
+        heep_size = board.get('build.heep_size', 0x0)
+        rom_size = board.get('build.maximum_size', 0x80000)
+        ram_size = board.get('build.maximum_ram_size', 0x10000)
 
         template_file = join(FRAMEWORK_DIR, 'platformio', 'ldscripts', 'tpl', 'linker.tpl')
-        print("template_file:", template_file)
+        # print("template_file:", template_file)
+        print("MCU Info: ")
+        print(" - flash size:", rom_size)
+        print(" - ram   size:", ram_size)
+        print(" - heep  size:", heep_size)
+        print(" - stack size:", stack_size)
         content = ""
         with open(template_file) as fp:
             data = Template(fp.read())
             content = data.substitute(
-                stack=hex(stack_size), # 0x20000000 - start address for RAM
+                stack=hex(stack_size),
+                HEEP=hex(heep_size),
                 ram=str(int(ram_size/1024)) + "K",
                 rom=str(int(rom_size/1024)) + "K",
             )
