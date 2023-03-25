@@ -50,8 +50,4 @@ void SysTick_Handler(void)
 {
     s_tick++;
     lv_tick_inc(1);
-	/* 定时刷新屏幕缓冲的内容 */
-    // if((s_tick % LV_INDEV_DEF_READ_PERIOD) == 0){
-
-    // }
 }

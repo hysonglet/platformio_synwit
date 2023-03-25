@@ -2,6 +2,8 @@
 
 - 开发环境：Platformio
 - 芯片： SWM341SRE
+- 屏幕: 合力泰JLT430A-V1
+- 触摸驱动GT911
 - 下载：JlinkV9
 
 ## 使用方法
