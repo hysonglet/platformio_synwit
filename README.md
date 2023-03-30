@@ -7,7 +7,7 @@
 ## 已经支持的主板
 * swm341sret6 (Cortex-M33)
 
-## 已支持的例程
+## 已支持的例程(swm341sret6)
 
 - gpio led
 
@@ -22,6 +22,20 @@
 - SDRAM
 
 - uart printf
+
+- c++
+
+- div
+
+- sdcard+fatfs
+
+- rtc
+
+- spi
+
+- exit
+
+- wdt
 
   后期逐步完善各外设的基本历程和常用的项目方案，如差分升级、操作系统、运动控制、电机控制等。
 
