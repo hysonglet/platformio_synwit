@@ -113,8 +113,8 @@ def get_linker_script(mcu):
         #     return ldscript
         stack_size = board.get('build.stack_size', 0x400)
         heep_size = board.get('build.heep_size', 0x0)
-        rom_size = board.get('build.maximum_size', 0x80000)
-        ram_size = board.get('build.maximum_ram_size', 0x10000)
+        rom_size = board.get('upload.maximum_size', 0x80000)
+        ram_size = board.get('upload.maximum_ram_size', 0x10000)
 
         template_file = join(FRAMEWORK_DIR, 'platformio', 'ldscripts', 'tpl', 'linker.tpl')
         # print("template_file:", template_file)

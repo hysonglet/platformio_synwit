@@ -1,0 +1,30 @@
+{
+	"build": {
+		"mcu": "swm166d8u6",
+		"cpu": "cortex-m0",
+		"series": "swm166",
+		"f_cpu": "12000000L",
+		"use_minimal_printf": false,
+		"use_printf_float": true,
+		"stack_size": 2048,
+		"heep_size": 0
+	},
+	"debug": {
+		"jlink_device": "SWM166x8",
+		"svd_path": ""
+	},
+	"frameworks": [
+		"spl"
+	],
+	"name": "SWM166d8u6 (8k RAM. 64k Flash)",
+	"upload": {
+		"protocol": "jlink",
+		"maximum_ram_size": 8192,
+		"maximum_size": 65536,
+		"protocols": [
+			"jlink"
+		]
+	},
+	"url": "http://www.synwit.cn/index.html",
+	"vendor": "Generic"
+}
