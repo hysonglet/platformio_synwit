@@ -1,29 +1,37 @@
 
 #include "SWM166.h"
 
-static void SerialInit(void);
+// static void SerialInit(void);
 
+#define LED_PORT GPIOA
+#define LED_PIN  PIN1
 
 int main()
 {
 	SystemInit();
-	SerialInit();
+	// SerialInit();
 
-	GPIO_Init(GPIOA, PIN5, 1, 0, 0, 0);			//输出， 接LED
-	GPIO_SetBit(GPIOA, PIN5);
-
-
-	while(1);
+	GPIO_Init(LED_PORT, LED_PIN, 1, 1, 1, 0);			//输出， 接LED
+	GPIO_SetBit(LED_PORT, LED_PIN);
+	
+	while(1) {
+	}
 }
 
+#if 0
 void SerialInit(void)
 {
 	UART_InitStructure UART_initStruct;
-	
-	PORT_Init(PORTA, PIN0, PORTA_PIN0_UART0_RX, 1);	//GPIOA.0配置为UART0 RXD
-	PORT_Init(PORTA, PIN1, PORTA_PIN1_UART0_TX, 0);	//GPIOA.1配置为UART0 TXD
+	#define UART0_RX_PORT			PORTM
+	#define UART0_RX_PIN			PIN4
+	#define UART0_RX_PIN_FN			PORTM_PIN4_UART0_RX
+	#define UART0_TX_PORT			PORTM
+	#define UART0_TX_PIN			PIN3
+	#define UART0_TX_PIN_FN			PORTM_PIN3_UART0_TX
+	PORT_Init(UART0_RX_PORT, UART0_RX_PIN, UART0_RX_PIN_FN, 1);	//GPIOA.0配置为UART0 RXD
+	PORT_Init(UART0_TX_PORT, UART0_TX_PIN, UART0_TX_PIN_FN, 0);	//GPIOA.1配置为UART0 TXD
  	
- 	UART_initStruct.Baudrate = 57600;
+ 	UART_initStruct.Baudrate = 115200;
 	UART_initStruct.DataBits = UART_DATA_8BIT;
 	UART_initStruct.Parity = UART_PARITY_NONE;
 	UART_initStruct.StopBits = UART_STOP_1BIT;
@@ -60,4 +68,6 @@ int fputc(int ch, FILE *f)
     while(UART_IsTXBusy(UART0));    
     return ch;    
 }    
+#endif
+
 #endif
