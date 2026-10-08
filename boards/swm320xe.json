@@ -1,0 +1,34 @@
+{
+  "build": {
+    "cpu": "cortex-m4",
+    "f_cpu": "120000000L",
+    "mcu": "swm320xe",
+    "float_abi": "soft",
+    "variant": "SWM320xE",
+    "synwit_clock": "vendor_default"
+  },
+  "debug": {
+    "default_tools": [
+      "jlink"
+    ],
+    "jlink_device": "SWM320xE",
+    "onboard_tools": [],
+    "svd_path": "SWM320.svd"
+  },
+  "frameworks": [
+    "synwit"
+  ],
+  "name": "Generic SWM320xE",
+  "upload": {
+    "maximum_ram_size": 131072,
+    "maximum_size": 524288,
+    "offset_address": "0x0",
+    "protocol": "custom",
+    "protocols": [
+      "jlink",
+      "custom"
+    ]
+  },
+  "url": "https://www.synwit.com",
+  "vendor": "Synwit"
+}

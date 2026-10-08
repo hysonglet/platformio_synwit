@@ -1,0 +1,34 @@
+{
+  "build": {
+    "cpu": "cortex-m33",
+    "f_cpu": "120000000L",
+    "mcu": "swm341xe",
+    "float_abi": "soft",
+    "variant": "SWM341xE",
+    "synwit_clock": "sys_clk_20mhz"
+  },
+  "debug": {
+    "default_tools": [
+      "jlink"
+    ],
+    "jlink_device": "SWM341xE",
+    "onboard_tools": [],
+    "svd_path": "SWM341.svd"
+  },
+  "frameworks": [
+    "synwit"
+  ],
+  "name": "Generic SWM341xE",
+  "upload": {
+    "maximum_ram_size": 65536,
+    "maximum_size": 524288,
+    "offset_address": "0x0",
+    "protocol": "custom",
+    "protocols": [
+      "jlink",
+      "custom"
+    ]
+  },
+  "url": "https://www.synwit.com",
+  "vendor": "Synwit"
+}

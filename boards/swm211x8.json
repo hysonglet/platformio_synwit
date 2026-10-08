@@ -1,0 +1,34 @@
+{
+  "build": {
+    "cpu": "cortex-m0",
+    "f_cpu": "60000000L",
+    "mcu": "swm211x8",
+    "float_abi": "soft",
+    "variant": "SWM211x8",
+    "synwit_clock": "vendor_default"
+  },
+  "debug": {
+    "default_tools": [
+      "jlink"
+    ],
+    "jlink_device": "SWM211x8",
+    "onboard_tools": [],
+    "svd_path": "SWM211.svd"
+  },
+  "frameworks": [
+    "synwit"
+  ],
+  "name": "Generic SWM211x8",
+  "upload": {
+    "maximum_ram_size": 8192,
+    "maximum_size": 65536,
+    "offset_address": "0x0",
+    "protocol": "custom",
+    "protocols": [
+      "jlink",
+      "custom"
+    ]
+  },
+  "url": "https://www.synwit.com",
+  "vendor": "Synwit"
+}

@@ -1,0 +1,34 @@
+{
+  "build": {
+    "cpu": "cortex-m0",
+    "f_cpu": "72000000L",
+    "mcu": "swm221xb",
+    "float_abi": "soft",
+    "variant": "SWM221xB",
+    "synwit_clock": "vendor_default"
+  },
+  "debug": {
+    "default_tools": [
+      "jlink"
+    ],
+    "jlink_device": "SWM221xB",
+    "onboard_tools": [],
+    "svd_path": "SWM221.svd"
+  },
+  "frameworks": [
+    "synwit"
+  ],
+  "name": "Generic SWM221xB",
+  "upload": {
+    "maximum_ram_size": 8192,
+    "maximum_size": 131072,
+    "offset_address": "0x0",
+    "protocol": "custom",
+    "protocols": [
+      "jlink",
+      "custom"
+    ]
+  },
+  "url": "https://www.synwit.com",
+  "vendor": "Synwit"
+}

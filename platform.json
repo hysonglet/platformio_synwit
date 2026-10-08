@@ -1,0 +1,55 @@
+{
+  "name": "synwit",
+  "title": "Synwit SWM",
+  "description": "Development platform for Synwit (华芯微特) SWM series ARM Cortex-M microcontrollers. It is a thin, data-driven wrapper around the official Synwit Chip Support Library (CSL): every supported series is described by one record inside the framework-synwit package (mcu.json), so new chips only need new data, no new code.",
+  "homepage": "https://www.synwit.com",
+  "license": "Apache-2.0",
+  "keywords": [
+    "dev-platform",
+    "ARM",
+    "Cortex-M",
+    "Synwit",
+    "SWM",
+    "SWM341",
+    "StdPeriph"
+  ],
+  "engines": {
+    "platformio": "^6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/synwit/platform-synwit"
+  },
+  "version": "0.1.0",
+  "frameworks": {
+    "synwit": {
+      "package": "framework-synwit",
+      "script": "builder/frameworks/synwit.py",
+      "title": "Synwit StdPeriph Library",
+      "description": "CMSIS-Core plus the Synwit Standard Peripheral Driver shipped by the vendor. Select the clock tree with board_build.synwit_clock, optionally enable the CMSIS-DSP / USB-Host libraries with board_build.synwit_features.",
+      "homepage": "https://www.synwit.com"
+    }
+  },
+  "packages": {
+    "toolchain-gccarmnoneeabi": {
+      "type": "toolchain",
+      "owner": "platformio",
+      "version": "~1.120301.0",
+      "optionalVersions": [
+        "~1.100301.0",
+        "~1.90301.0"
+      ]
+    },
+    "framework-synwit": {
+      "type": "framework",
+      "optional": true,
+      "version": "~1.0.0"
+    },
+    "tool-jlink": {
+      "type": "uploader",
+      "optional": true,
+      "owner": "platformio",
+      "version": "^1.63208.0"
+    }
+  }
+}

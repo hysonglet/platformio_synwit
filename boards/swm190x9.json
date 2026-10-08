@@ -1,0 +1,34 @@
+{
+  "build": {
+    "cpu": "cortex-m0",
+    "f_cpu": "64000000L",
+    "mcu": "swm190x9",
+    "float_abi": "soft",
+    "variant": "SWM190x9",
+    "synwit_clock": "vendor_default"
+  },
+  "debug": {
+    "default_tools": [
+      "jlink"
+    ],
+    "jlink_device": "SWM190x9",
+    "onboard_tools": [],
+    "svd_path": "SWM190.svd"
+  },
+  "frameworks": [
+    "synwit"
+  ],
+  "name": "Generic SWM190x9",
+  "upload": {
+    "maximum_ram_size": 20480,
+    "maximum_size": 98304,
+    "offset_address": "0x0",
+    "protocol": "custom",
+    "protocols": [
+      "jlink",
+      "custom"
+    ]
+  },
+  "url": "https://www.synwit.com",
+  "vendor": "Synwit"
+}
