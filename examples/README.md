@@ -13,6 +13,7 @@
 | `swm260-blink/` | `swm260xb` | PA5 | TX=PC13  RX=PC14 |
 | `swm320-blink/` | `swm320xc` `swm320xe` | PA5 | TX=PA3  RX=PA2 |
 | `swm341-blink/` | `swm341xe` | PA5 | TX=PM1  RX=PM0 |
+| `swm341-rtt/` | `swm341xe` | PA5 | 不走串口，输出经 SWD 调试口走 SEGGER RTT |
 
 SWM201 与 SWM211 共用一份 CSL，所以合在 `swm2x1-blink/` 里（靠
 `CHIP_SWM201` / `CHIP_SWM211` 区分，导入脚本会自动加）。
@@ -46,6 +47,28 @@ int _write(int fd, char *ptr, int len)   /* overrides the libnosys stub */
 
 另外调用了 `setvbuf(stdout, NULL, _IONBF, 0);`，否则 newlib 会缓冲 stdout，
 短字符串可能一直不出。
+
+## swm341-rtt：不占用串口的控制台
+
+`swm341-rtt/` 用 SEGGER RTT 输出，什么都不接，靠 SWD 调试口读写芯片 RAM 里的
+RTT 控制块。库不是本地拷贝的，而是 `platformio.ini` 里的：
+
+```ini
+lib_deps = git@github.com:SEGGERMicro/RTT.git
+```
+
+`pio run` 时 PlatformIO 自己 clone 到 `.pio/libdeps/<env>/RTT/`。两个坑已经填了：
+
+- 该仓库根目录没有 `library.json`，PIO 只解包 `RTT/` 子目录，于是官方那份
+  `Config/SEGGER_RTT_Conf.h` 不会被拉下来。它本来就该由应用提供，所以工程
+  自带一份 `include/SEGGER_RTT_Conf.h`（空的 = 全用默认值）。
+- 库在自己的编译环境里构建，看不到工程的 `include/`，所以配了
+  `build_flags = -I$PROJECT_DIR/include`（必须用绝对路径）。
+- `Syscalls/SEGGER_RTT_Syscalls_GCC.c` 同样没被拉下来，所以示例自己实现了
+  `_write()` 转发到 RTT channel 0，`printf()` 也能走 RTT。
+
+看输出用 `JLinkRTTViewer` / `JLinkRTTLogger`，**不是** `pio device monitor`
+（那看的是串口，这个示例没用串口）。
 
 ## 关于烧录
 
