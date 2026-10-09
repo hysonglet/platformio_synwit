@@ -1,0 +1,33 @@
+diff --git a/src/ltmb_parse.c b/src/ltmb_parse.c
+index 40e5e0c..b59195a 100644
+--- a/src/ltmb_parse.c
++++ b/src/ltmb_parse.c
+@@ -174,6 +174,9 @@ static const LtmbFileOps fatfs_ops = {
+ #ifdef LTMB_USE_STDIO
+ #include <stdio.h>
+ 
++/* 前置声明：stdio_read_at() 要靠它区分「内置 stdio 后端」和「调用方注入的 ops」 */
++static const LtmbFileOps stdio_ops;
++
+ /* stdio 后端双流实现：两个 FILE* 指向同一文件，按绝对偏移分流。
+  * context 即 LtmbHandle*（与 FatFS 分支把 FIL 内嵌进 LtmbHandle 同构），
+  * 所以 open 直接把 LtmbHandle* 自身作为句柄返回，close/read/seek 再反推回来。 */
+@@ -261,6 +264,18 @@ static int32_t stdio_read_at(LtmbHandle* h, uint32_t offset,
+                              uint8_t* buffer, uint32_t size) {
+     if(h == NULL || buffer == NULL || size == 0u) return -1;
+ 
++    /* ★ 调用方注入了自定义 ops（mv_port → FatFs 等）时必须走 ops。
++     * 内置的 stdio 分支假定 fh_idx/fh_data 是真正的 FILE*，而注入后端塞进来的是
++     * 自己的句柄（裸机 FatFS 下是 FIL*）：直接 fread() 必然失败，表现为
++     * 「每次读都返回 -1、瓦片保持调用方填的背景色（全 0xFF，一片白）」。
++     * 索引表和瓦片数据都走这个函数，所以补丁放在这里就够了。 */
++    if(h->ops != NULL && h->ops != &stdio_ops && h->file_handle != NULL &&
++       h->ops->seek != NULL && h->ops->read != NULL) {
++        if(h->ops->seek(h->file_handle, offset) != 0) return -1;
++        int32_t n = h->ops->read(h->file_handle, buffer, size);
++        return (n == (int32_t)size) ? n : -1;
++    }
++
+     const bool use_main = (offset >= h->data_off);
+     FILE*      f   = use_main ? h->fh_data : h->fh_idx;
+     uint32_t*  pos = use_main ? &h->data_pos : &h->idx_pos;

@@ -14,7 +14,8 @@
 | `swm320-blink/` | `swm320xc` `swm320xe` | PA5 | TX=PA3  RX=PA2 |
 | `swm341-blink/` | `swm341xe` | PA5 | TX=PM1  RX=PM0 |
 | `swm341-rtt/` | `swm341xe` | PA5 | 不走串口，输出经 SWD 调试口走 SEGGER RTT |
-| `swm341-lvgl-rtt/` | `swm341xe` | 无 | 800x480 RGB 屏 + LVGL，日志走 RTT（需 SDRAM） |
+| `swm341-lvgl-rtt/` | `swm341xe` | 无 | 800x480 RGB 屏 + LVGL 8.4，日志走 RTT（需 SDRAM） |
+| `swm341-lvgl9.5-rtt/` | `swm341xe` | 无 | 同上，LVGL 9.5 + microSD（FatFs，挂到 LVGL 的 `S:` 盘符） |
 
 SWM201 与 SWM211 共用一份 CSL，所以合在 `swm2x1-blink/` 里（靠
 `CHIP_SWM201` / `CHIP_SWM211` 区分，导入脚本会自动加）。
@@ -163,6 +164,143 @@ pio run -t upload            # probe-rs run：烧完挂住打印 RTT（Ctrl-C �
 
 屏幕上会显示标题、运行时间、每 10 秒走一圈的进度条，右下角/左下角有 LVGL 自带的
 FPS 与堆占用指示；同样的信息每秒打一次到 RTT channel 0。
+
+## swm341-lvgl9.5-rtt：同样的屏，换成 LVGL 9.5
+
+`swm341-lvgl-rtt` 的 9.5 版。板子、引脚、时序、内存布局完全一样，所以
+`board_lcd.[ch]` 是原样复制的，差别只在 `lv_port_disp.c`、`lv_conf.h` 和 `main.c`：
+
+| LVGL 8.4 | LVGL 9.5 |
+| --- | --- |
+| `lv_disp_drv_t` + `lv_disp_drv_register()` | `lv_display_create()` |
+| `lv_disp_draw_buf_init(buf1, buf2, px)` | `lv_display_set_buffers(disp, buf1, buf2, byte, mode)` |
+| `full_refresh = 1` | `LV_DISPLAY_RENDER_MODE_FULL` |
+| `lv_disp_flush_ready(drv)` | `lv_display_flush_ready(disp)` |
+| `lv_scr_act()` | `lv_screen_active()` |
+| 日志回调 `void cb(const char *)` | `void cb(lv_log_level_t, const char *)` |
+
+几个容易踩的点：
+
+- `lv_display_set_buffers()` 的 `buf_size` 单位是**字节**（`800 * 480 * 2`），不是像素数。
+- 9.5 的 `lv_display_create()` 自带默认主题，不用再手动 `lv_theme_default_init()`。
+- `platformio.ini` 里写的是 `lvgl/lvgl@9.5.0`；写成 `^9.5.0` 会被解析成 9.6.0。
+- 比 8.4 那版费 Flash：318 KB / 512 KB（8.4 是 224 KB），RAM 仍是 2.6 KB / 64 KB，
+  LVGL 的堆照旧放在 SDRAM `0x80177000`。
+
+```bash
+cd swm341-lvgl9.5-rtt
+pio run
+pio run -t upload
+```
+
+### microSD（FatFs + LVGL fs）
+
+卡座走的是 **4 位 SDIO**，不是 SPI：
+
+| 信号 | SDCLK | CMD | D0 | D1 | D2 | D3 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 引脚 | M2 | M4 | M5 | M6 | N0 | N1 |
+
+（原理图 MCU 引脚表里就是这么标的，和厂商 `dev_sdio.c` 一致；与 SDRAM 占的
+M12-M15 / N2-N15 不冲突。）**SD_DET 没接到 MCU**——原理图说明里写了这个脚可以
+省出来做普通 IO，卡是否插入靠"能不能通讯"判断，所以 `board_sd_mount()` 可以反复
+调用：本示例每秒重试一次，卡插进去后屏幕上那行 SD 状态会自己变。
+
+代码分三层：
+
+```
+src/fatfs/         FatFs R0.13（从厂商 SDIO/SDCard_FATFS 例程拷来）
+                   ffconf.h 只改了两处：FF_VOLUMES 1、FF_VOLUME_STRS "sd"
+src/diskio_sdio.c  FatFs 的 disk I/O 层：SDIO 引脚、SDIO_Init(10 MHz)、扇区读写
+src/board_sd.c     f_mount / f_getfree，对外只给 board_sd_mount() 等几个函数
+```
+
+LVGL 侧只改了 `lv_conf.h` 三行：
+
+```c
+#define LV_USE_FS_FATFS 1
+#define LV_FS_FATFS_LETTER 'S'
+#define LV_FS_FATFS_PATH "sd:"
+```
+
+`lv_init()` 会自己调 `lv_fs_fatfs_init()`，所以业务代码里直接用盘符就行，不用
+手动注册驱动：
+
+```c
+lv_fs_open(&f, "S:swm341.txt", LV_FS_MODE_WR);   /* -> f_open("sd:swm341.txt") */
+lv_fs_dir_open(&d, "S:/");
+```
+
+上电后示例会往卡里写 `sd:swm341.txt`、读回来比对、再列根目录前 10 项，结果打到
+RTT channel 0，屏幕底部那行显示 `SD: FAT32 | xxx MB free of xxx MB`。
+
+两个坑：
+
+- `SDIO_BlockRead/Write()` 收的是 `uint32_t *`，**缓冲区必须 4 字节对齐**；
+  FatFs 传下来的却是调用者的 buffer，`diskio_sdio.c` 里对未对齐的情况做了中转。
+- `lv_fs_fatfs.c` 是 LVGL 库里的文件，它要 `#include "ff.h"`，所以 `platformio.ini`
+  里必须有 `-I$PROJECT_DIR/src/fatfs`（`-I` 会传给库的编译环境）。
+
+### 地图预览（libs/map_view + libs/ltmb_parse）
+
+地图功能依赖两个外部库，**它们不在本仓库里**（`.gitignore` 排除了 `libs/`），
+编译前要自己 clone 进来（`platformio.ini` 用 `lib_extra_dirs = libs` 引入，不走
+`lib_deps` 远程拉取）：
+
+```bash
+cd swm341-lvgl9.5-rtt
+mkdir -p libs && cd libs
+git clone git@github.com:hysonglet/map_view.git
+git clone git@github.com:hysonglet/ltmb_parse.git
+
+# 本工程依赖的两处改动还没推到上游，用仓库里的补丁打上：
+cd ..
+git apply patches/0001-map_view-add-MV_PORT_NO_DIRENT-switch.patch   -p1 --directory=libs/map_view
+git apply patches/0002-ltmb_parse-honour-injected-file-ops.patch     -p1 --directory=libs/ltmb_parse
+```
+
+```
+libs/ltmb_parse/   LtmbParse  .ltb 瓦片包解析（v1 顺序 / v2 索引去重）
+libs/map_view/     MapViewV2  LVGL 离线地图控件，API 前缀 mv_
+```
+
+不打补丁的后果：0001 缺失会直接在 `mv_port.c` 的 `#include <dirent.h>` 上编译报错
+（裸机 newlib 的 dirent.h 存在但 include 就 `#error`）；0002 缺失**能编译能挂载，
+但瓦片全是白的**——`ltmb_parse` 读瓦片时绕过了注入的 ops 去 `fread()` 一个 `FIL*`，
+每次读都失败，瓦片保持调用方预填的 `0xFF` 背景色。
+
+`src/map_demo.c` 把两边接起来：扫 `sd:/maps/*.ltb`（跳过 macOS 拷卡时生成的 `._xxx`
+资源分支），打开 `MAP_ONLY_NAME` 指定的那一个（`src/map_demo.c` 顶部，默认衡阳），
+地图占满全屏，右侧一块半透明浮层显示城市 / 级别 / 瓦片 / 经纬度范围 / 当前视点坐标（文字过长横向滚动）。**没有触摸或
+按键**，所以视角由定时器带着走：每 5 秒沿西北→东南的对角线挪一格，10 格一个来回
+（想恢复「轮流打开每个包」就把 `pan_timer` 换回轮播定时器）。
+
+接线只有一件事——`map_view` 硬件无关，文件/内存/日志全靠 `mv_port` 注入：
+
+| mv_port 钩子 | 本示例接到 |
+| --- | --- |
+| `fs.open/read/seek/close` | FatFs（`f_open/f_read/f_lseek/f_close`） |
+| `fs.opendir/readdir/closedir` | FatFs（`f_opendir/f_readdir`） |
+| `alloc` | `mv_port_use_lvgl_heap(true)` → LVGL 堆 |
+| `log` | RTT channel 0 |
+| `os.task_create` | 不注入 → **pump 模式**（控件自带 lv_timer 推进瓦片加载），裸机可用 |
+
+几个必须知道的点：
+
+- **瓦片内存**：256px RGB565 一块就是 128 KB，而芯片内部 SRAM 只有 64 KB。所以 LVGL
+  堆在 SDRAM 里扩到 **4 MB**（`LV_MEM_SIZE`，地址 `0x80177000`），槽位数按
+  `3 MB / bytes_per_tile` 算（256px 时是 24 槽）。
+- **中文文件名**：`ffconf.h` 里 `FF_LFN_UNICODE 2`（API 用 UTF-8），否则 FatFs 会把
+  汉字转成 `?`，`f_open` 打不开。屏上没有中文字模，所以标签显示 8.3 短名（ASCII），
+  完整原名只打到 RTT 里。
+- **对 map_view 的一处改动**：`mv_port.c` 用 `__has_include(<dirent.h>)` 探测目录接口，
+  而裸机 newlib 的 `dirent.h` 存在、`#include` 却直接 `#error`。加了
+  `-DMV_PORT_NO_DIRENT` 开关（在 `platformio.ini` 里），已改到 `libs/map_view`。
+- **没有输入设备**：示例没接触摸/按键，地图不能拖，只能轮播；要拖动就再接一个
+  `lv_indev`（触摸芯片走 I2C，板上有 `CT_RST`/`TP_RST` 网络）。
+
+> `libs/` 已在 `.gitignore` 里排除：两个库各自是独立的 git 仓库，本仓库只保留
+> `patches/` 下那两个补丁。等补丁推到上游后就不用再手工 `git apply` 了。
 
 ## 关于烧录
 

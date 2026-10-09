@@ -1,0 +1,15 @@
+diff --git a/src/mv_port.c b/src/mv_port.c
+index c6ded4d..d1e5b24 100644
+--- a/src/mv_port.c
++++ b/src/mv_port.c
+@@ -11,7 +11,9 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
+-#if defined(__has_include)
++/* MV_PORT_NO_DIRENT: 裸机 newlib 里 <dirent.h> 存在但 #include 就 #error，
++ * __has_include 看不出来，所以留一个显式开关。定义后目录相关的默认实现走空桩。 */
++#if !defined(MV_PORT_NO_DIRENT) && defined(__has_include)
+ #  if __has_include(<dirent.h>)
+ #    include <dirent.h>
+ #    define MV_HAS_DIRENT 1

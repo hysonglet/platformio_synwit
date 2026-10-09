@@ -3,3 +3,7 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# swm341-lvgl9.5-rtt: the two map libraries are cloned into libs/ by hand and
+# are not part of this repo - see examples/README.md ("地图预览").
+examples/swm341-lvgl9.5-rtt/libs/
