@@ -14,6 +14,7 @@
 | `swm320-blink/` | `swm320xc` `swm320xe` | PA5 | TX=PA3  RX=PA2 |
 | `swm341-blink/` | `swm341xe` | PA5 | TX=PM1  RX=PM0 |
 | `swm341-rtt/` | `swm341xe` | PA5 | 不走串口，输出经 SWD 调试口走 SEGGER RTT |
+| `swm341-lvgl-rtt/` | `swm341xe` | 无 | 800x480 RGB 屏 + LVGL，日志走 RTT（需 SDRAM） |
 
 SWM201 与 SWM211 共用一份 CSL，所以合在 `swm2x1-blink/` 里（靠
 `CHIP_SWM201` / `CHIP_SWM211` 区分，导入脚本会自动加）。
@@ -69,6 +70,99 @@ lib_deps = git@github.com:SEGGERMicro/RTT.git
 
 看输出用 `JLinkRTTViewer` / `JLinkRTTLogger`，**不是** `pio device monitor`
 （那看的是串口，这个示例没用串口）。
+
+## swm341-lvgl-rtt：800x480 RGB 屏 + LVGL 8.4
+
+参考厂商 `02.SWM34S TFT-LCD 驱动例程 / 00.TTL-RGB Demo / 05.SWM34SR&Vxxx_800x480_ebike演示例程`，
+去掉触摸/JPEG/SPI flash，只留下屏 + LVGL + RTT 控制台。
+
+```
+include/lv_conf.h          LVGL 配置（基于 8.4.0 模板改了 5 处）
+include/board_lcd.h        板型选择 + SDRAM 内存布局
+include/SEGGER_RTT_Conf.h  RTT 配置
+src/board_lcd.c            SDRAM 引脚 → SysTick → RGB565 引脚 + LCD 时序
+src/lv_port_disp.c         LVGL 显示驱动（双 framebuffer 直接翻转）
+src/main.c                 LVGL 初始化 + 界面 + RTT 日志
+```
+
+### 硬件前提
+
+**必须有 SDRAM**。芯片内部只有 64 KB SRAM，而一屏 800x480 RGB565 就要 750 KB：
+
+```
+0x80000000   framebuffer 1 (768 000 B)
+0x800BB800   framebuffer 2 (768 000 B)
+0x80177000   LVGL 堆 128 KB（lv_conf.h 的 LV_MEM_ADR）
+```
+
+两块 framebuffer 都在 SDRAM 里，LVGL 画一块、LCD 控制器扫另一块，`flush_cb` 只把
+layer 0 的地址改成刚画完的那块（这就是厂商 `lv_port_disp3.c` 的做法）。LVGL 的堆
+也搬到 SDRAM（`LV_MEM_ADR`），内部 SRAM 留给栈、`.bss` 和 RTT 控制块——实测
+RAM 只用了 3.4 KB / 64 KB，Flash 224 KB / 512 KB。
+
+### 板型和引脚
+
+`include/board_lcd.h` 里用宏选板，`platformio.ini` 里默认是 **64 脚**那块：
+
+```ini
+build_flags =
+    -I$PROJECT_DIR/include
+    -DSWM34S_LCM_PCBV=SWM34SRE_PIN64_A001
+```
+
+| 宏 | 板子 | 背光 | 复位 | HSYNC / DEN |
+| --- | --- | --- | --- | --- |
+| `SWM34SRE_PIN64_A001` | SWM34SRET6 LQFP64（`SWDM-QFP64-34SREB2` 5 寸 800x480） | **PB13** | PD1 | PB3 / PB4 |
+| `SWM34SVE_PIN100_A001` | SWM34SVET6 LQFP100（7 寸，PA1 选通 AP3012 升压） | PD9 | PD1 | PB3 / PB4 |
+| `SWM34SVE_PIN100_A002` | SWM34SVET6 LQFP100（A002/A003） | PD9 | PD1 | PM8 / PM11 |
+
+R/G/B 数据线和 DCLK/VSYNC 三种板子都一样，只有 HSYNC/DEN 和背光脚不同。**选错就是黑屏**
+——背光不亮（还可能被当成 B2 主动拉低）、DE 没有输出。引脚表来自厂商
+`Config.h` + `dev_rgb.c`，并用 2024 年 navi-meter 例程的 `board/swm34s/swm34sre/a1/dev_lcdc.c`
+逐条核对过；SDRAM 的 39 根引脚也和厂商 `common/sdram/dev_sdram.c` 完全一致。
+
+### 时钟
+
+```ini
+board_build.synwit_clock = pll_xtal12m_120m
+```
+
+板子默认是 20 MHz 内部 RC，跑不动屏。120 MHz / `ClkDiv 4` = 30 MHz DOTCLK，
+配合厂商那组 800x480 时序（Hfp 64 / Hbp 46 / Vfp 22 / Vbp 23）约 62 Hz。
+厂商例程跑 150 MHz 配 `ClkDiv 5`，同样是 30 MHz，两者都可以。
+
+### 启动自检
+
+上电后 RTT 里除了版本信息还会打三行，黑屏时先看它：
+
+```
+board: SWM34SRE_PIN64_A001 (SWM34SRET6 LQFP64)
+SDRAM: ok (framebuffer 1+2, LVGL heap)
+LCD: BL pin = 1, 12 frames in 200 ms
+```
+
+- `SDRAM`：往两块 framebuffer 和 LVGL 堆的地址写图案读回来，失败会指出是哪个窗口。
+- `BL pin`：回读背光脚的实际电平（`IDR`）。选错板型时这里会是 0 或读到别的脚。
+- `frames`：清掉 LCD 出帧完成标志后数 200 ms 内又置起来几次，800x480@62 Hz 约 12 次，
+  0 说明 LCD 控制器根本没在扫。
+
+### 与厂商 SDK 的差异（已在本工程里改掉）
+
+- 新的 CSL 把 `SDRAM_InitStructure.TimeTRFC` / `SDRAM_TRFC_9` 改名成
+  `TimeTRC` / `SDRAM_TRC_9`，并且**新增了 `RefreshTime`**（整片刷新窗口，填 64 ms）。
+  照抄老例程会编译不过，留空则刷新过密。
+- 老例程用的 `GPIO_AtomicSetBit/ClrBit` 在这个 CSL 里只是 `GPIO_SetBit/ClrBit` 的宏。
+
+### 构建与运行
+
+```bash
+cd swm341-lvgl-rtt
+pio run                      # LVGL 从 PlatformIO 仓库拉，RTT 从 GitHub clone
+pio run -t upload            # probe-rs run：烧完挂住打印 RTT（Ctrl-C 退出）
+```
+
+屏幕上会显示标题、运行时间、每 10 秒走一圈的进度条，右下角/左下角有 LVGL 自带的
+FPS 与堆占用指示；同样的信息每秒打一次到 RTT channel 0。
 
 ## 关于烧录
 
