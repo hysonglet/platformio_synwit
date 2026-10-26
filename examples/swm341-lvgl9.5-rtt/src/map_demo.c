@@ -24,6 +24,7 @@
 #include "lvgl.h"
 
 #include "board_lcd.h"
+#include "board_touch.h"
 #include "mv_port.h"
 #include "mv_source.h"
 #include "mv_tile_cache.h"
@@ -80,6 +81,7 @@ static double s_from_lat, s_from_lon, s_to_lat, s_to_lon;
 static int    s_step;
 static int    s_steps = 10;   /* recomputed from the map size in map_open() */
 static int    s_have_range;
+static int    s_user_took_over;   /* set on the first touch: stop the auto-pan */
 
 /*---------------------------------------------------------------------------
  * mv_port: files -> FatFs, log -> RTT
@@ -565,9 +567,23 @@ static void pan_apply(void)
     }
 }
 
+/* The first touch switches from the automatic walk to real dragging: from
+ * then on the map only moves when the finger does. */
+static void map_pressed_cb(lv_event_t *e)
+{
+    (void)e;
+
+    if(!s_user_took_over) {
+        s_user_took_over = 1;
+        SEGGER_RTT_printf(RTT_CH, "map: touch -> drag mode, auto-pan stopped\n");
+    }
+}
+
 static void pan_timer(lv_timer_t *timer)
 {
     (void)timer;
+
+    if(s_user_took_over) return;   /* the user is dragging, do not fight him */
 
     if(s_map_count == 0) {
         if(maps_scan() == 0) return;         /* card or directory missing */
@@ -619,6 +635,18 @@ void map_demo_create(void)
     lv_obj_set_style_bg_opa(s_map, LV_OPA_COVER, 0);
     mv_view_set_debug_overlay(s_map, true);
 
+    /* drag the map with the finger; the first press stops the auto-pan */
+    lv_obj_add_event_cb(s_map, map_pressed_cb, LV_EVENT_PRESSED, NULL);
+
+    /* touch panel (GT911 on I2C1) -> LVGL pointer device */
+    if(board_touch_init() == 0) {
+        lv_port_indev_init();
+        SEGGER_RTT_printf(RTT_CH, "map: touch ready - drag to move the map\n");
+    }
+    else {
+        SEGGER_RTT_printf(RTT_CH, "map: no touch panel, keeping the auto-pan\n");
+    }
+
     /* floating card on top of the map: created after it, so it is drawn last.
      * Semi transparent, so the tiles stay visible underneath. */
     bar = lv_obj_create(scr);
@@ -630,6 +658,9 @@ void map_demo_create(void)
     lv_obj_set_style_radius(bar, 10, 0);
     lv_obj_set_style_pad_all(bar, 0, 0);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    /* not clickable, so a drag that starts over the card still reaches the
+     * map underneath */
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
 
     s_lbl_name = lv_label_create(bar);
     lv_obj_set_width(s_lbl_name, MAP_SIDE_W - 20);
