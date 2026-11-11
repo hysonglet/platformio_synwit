@@ -53,7 +53,7 @@
  * docked to the right edge and slightly transparent. */
 #define MAP_SIDE_W     (LCD_HDOT / 3)   /* floating card width: 1/3 of the screen */
 #define MAP_CARD_H     180
-#define MAP_CARD_OPA   LV_OPA_70
+#define MAP_CARD_OPA   LV_OPA_20
 #define MAP_VIEW_W     LCD_HDOT
 #define MAP_VIEW_H     LCD_VDOT
 
@@ -67,6 +67,10 @@ static map_entry_t s_maps[MAP_MAX_FILES];
 static int         s_map_count;
 static int         s_map_index;
 
+#define MAP_BTN_SIZE   56   /* floating +/- zoom buttons */
+#define MAP_MENU_W     420  /* map picker panel */
+#define MAP_MENU_H     320
+
 static lv_obj_t *s_map;
 static lv_obj_t *s_lbl_name;      /* top bar: "MAP 2/3  <short name>" */
 static lv_obj_t *s_lbl_city;
@@ -75,6 +79,19 @@ static lv_obj_t *s_lbl_tiles;
 static lv_obj_t *s_lbl_bounds1;
 static lv_obj_t *s_lbl_bounds2;
 static lv_obj_t *s_lbl_view;
+
+/* floating controls on top of the map */
+static lv_obj_t *s_btn_zoom_in;
+static lv_obj_t *s_btn_zoom_out;
+static lv_obj_t *s_btn_menu;
+static lv_obj_t *s_menu;          /* map picker panel (hidden by default) */
+static lv_obj_t *s_menu_list;
+
+/* touch probe: a dot + coordinates, so a wrong X/Y mirror is visible at once */
+static lv_obj_t *s_touch_dot;
+static lv_obj_t *s_touch_lbl;
+static uint32_t  s_touch_last_ms;
+static bool      s_touch_was_down;
 
 /* diagonal walk: from/to in degrees, current step */
 static double s_from_lat, s_from_lon, s_to_lat, s_to_lon;
@@ -297,7 +314,7 @@ static int32_t lt_read(void *handle, uint8_t *buffer, uint32_t size)
     return (int32_t)fs_read(handle, buffer, (int)size, NULL);
 }
 
-static int32_t lt_seek(void *handle, uint32_t offset)
+static int32_t lt_seek(void *handle, uint64_t offset)
 {
     /* FatFS 向后 seek 会重走 FAT 链（大文件上很慢），已经在目标位置就直接返回 */
     if(f_tell((FIL *)handle) == (FSIZE_t)offset) return 0;
@@ -305,25 +322,48 @@ static int32_t lt_seek(void *handle, uint32_t offset)
     return (int32_t)fs_seek(handle, (long)offset, NULL);
 }
 
-static uint32_t lt_size(void *handle)
+static uint64_t lt_size(void *handle)
 {
-    return (uint32_t)f_size((FIL *)handle);
+    return (uint64_t)f_size((FIL *)handle);
 }
 
 static const LtmbFileOps s_lt_ops = {
     lt_open, lt_close, lt_read, lt_seek, lt_size
 };
 
-/* the handle carries a 1 KB header - never on the stack */
+/* v3: the handle carries a 2 KB header (levels[24] table) - never on the stack */
 static LtmbHandle s_lt;
 
 static void read_city(const char *path, char *out, size_t n)
 {
+    unsigned i;
+
     out[0] = '\0';
 
     ltmb_handle_init(&s_lt);
-    if(ltmb_open_with_ops(&s_lt, &s_lt_ops, path) != LTMB_OK) {
-        SEGGER_RTT_printf(RTT_CH, "map: header read failed\n");
+    LtmbError err = ltmb_open_with_ops(&s_lt, &s_lt_ops, path);
+    if(err != LTMB_OK) {
+        uint8_t hdr[12] = { 0 };
+        UINT br = 0;
+        void *probe = fs_open(path, NULL);
+
+        if(probe != NULL) {
+            f_read((FIL *)probe, hdr, sizeof(hdr), &br);
+            fs_close(probe, NULL);
+        }
+
+        /* 新版解析器只认 v3（一个包里多个缩放级）。旧 v1/v2 包返回 -8。
+         * 直接把前 12 字节打出来，一眼看清是哪个版本、是不是 .ltb。 */
+        SEGGER_RTT_printf(RTT_CH,
+                          "map: header read failed (%d, %s); got %u B: "
+                          "magic=%c%c%c%c version=%u header_size=%u\n",
+                          (int)err, ltmb_error_string(err), (unsigned)br,
+                          hdr[0], hdr[1], hdr[2], hdr[3],
+                          (unsigned)((uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) |
+                                     ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24)),
+                          (unsigned)((uint32_t)hdr[8] | ((uint32_t)hdr[9] << 8) |
+                                     ((uint32_t)hdr[10] << 16) | ((uint32_t)hdr[11] << 24)));
+        SEGGER_RTT_printf(RTT_CH, "map: need LTMB v3 packages (re-export with the new tool)\n");
         return;
     }
 
@@ -337,24 +377,30 @@ static void read_city(const char *path, char *out, size_t n)
         fs_close(fh, NULL);
     }
 
-    SEGGER_RTT_printf(RTT_CH, "map: place_name = \"%s\", zoom = %u, %ux%u @ %upx\n",
-                      s_lt.header.place_name,
-                      (unsigned)s_lt.header.zoom,
-                      (unsigned)s_lt.header.tile_cols,
-                      (unsigned)s_lt.header.tile_rows,
-                      (unsigned)s_lt.header.tile_size);
-    SEGGER_RTT_printf(RTT_CH,
-                      "map: ver=%u fmt=%u bpp=%u tiles=%u data_off=%u data_size=%u "
-                      "unique=%u file=%u KB (%u KB expected)\n",
+    SEGGER_RTT_printf(RTT_CH, "map: place_name = \"%s\"\n", s_lt.header.place_name);
+    SEGGER_RTT_printf(RTT_CH, "map: ver=%u fmt=%u levels=%u file=%u KB\n",
                       (unsigned)s_lt.header.version,
                       (unsigned)s_lt.header.format,
-                      (unsigned)s_lt.header.bytes_per_pixel,
-                      (unsigned)s_lt.header.total_tiles,
-                      (unsigned)s_lt.header.data_offset,
-                      (unsigned)s_lt.header.data_size,
-                      (unsigned)s_lt.header.unique_tile_count,
-                      (unsigned)(fsize / 1024),
-                      (unsigned)(s_lt.header.total_tiles * 512 * 512 * 2 / 1024));
+                      (unsigned)s_lt.header.level_count,
+                      (unsigned)(fsize / 1024));
+
+    /* one line per zoom level stored in the package (v3 multi-level format) */
+    for(i = 0; i < (unsigned)s_lt.header.level_count && i < LTMB_MAX_ZOOM_LEVELS; i++) {
+        const LtmbLevel *lv = &s_lt.header.levels[i];
+
+        if(lv->data_size == 0) continue;   /* level not present */
+
+        SEGGER_RTT_printf(RTT_CH,
+                          "map:   z%u %ux%u @%upx tiles=%u unique=%u off=%u size=%u KB\n",
+                          (unsigned)lv->zoom,
+                          (unsigned)lv->tile_cols,
+                          (unsigned)lv->tile_rows,
+                          (unsigned)lv->tile_size,
+                          (unsigned)lv->total_tiles,
+                          (unsigned)lv->unique_tile_count,
+                          (unsigned)lv->data_offset,
+                          (unsigned)(lv->data_size / 1024));
+    }
 
     ltmb_close(&s_lt);
 }
@@ -363,6 +409,8 @@ static void read_city(const char *path, char *out, size_t n)
  * open one package
  *-------------------------------------------------------------------------*/
 static void pan_apply(void);
+static void level_label_update(void);
+static void menu_rebuild(void);
 
 /* bring-up probes: is the tile data readable, does the cache fill up */
 static void probe_tile(mv_source_t *src, const mv_grid_t *g)
@@ -445,7 +493,10 @@ static void map_open(int index)
     src = mv_source_open_ltmb(e->path, NULL);
     if(src == NULL) {
         SEGGER_RTT_printf(RTT_CH, "map: ltmb open failed\n");
-        lv_label_set_text(s_lbl_tiles, "open failed");
+        lv_label_set_text(s_lbl_tiles, "open failed: need LTMB v3");
+        lv_label_set_text(s_lbl_city, "re-export .ltb with the v3 tool");
+        lv_label_set_text(s_lbl_level, "no map loaded");
+        lv_label_set_text(s_lbl_view, "check RTT for the header dump");
         return;
     }
 
@@ -462,11 +513,6 @@ static void map_open(int index)
                  (unsigned)(per / 1024), capacity);
         lv_label_set_text(s_lbl_tiles, buf);
         SEGGER_RTT_printf(RTT_CH, "map: %s\n", buf);
-
-        snprintf(buf, sizeof(buf), "level: z%d (%d of %d)", grid.zoom, 1,
-                 mv_source_level_count(src));
-        lv_label_set_text(s_lbl_level, buf);
-        SEGGER_RTT_printf(RTT_CH, "map: %s\n", buf);
     }
 
     if(!mv_view_set_source(s_map, src, capacity)) {
@@ -478,6 +524,7 @@ static void map_open(int index)
 
     probe_tile(src, &grid);
     print_cache_stats();
+    level_label_update();
 
     /* show the area the package covers, and write it on screen */
     double north, south, east, west;
@@ -573,6 +620,9 @@ static void map_pressed_cb(lv_event_t *e)
 {
     (void)e;
 
+    /* 点按钮时不该出现这一行：出现就说明触点落到了地图上（坐标镜像不对） */
+    SEGGER_RTT_printf(RTT_CH, "map: map object got PRESSED\n");
+
     if(!s_user_took_over) {
         s_user_took_over = 1;
         SEGGER_RTT_printf(RTT_CH, "map: touch -> drag mode, auto-pan stopped\n");
@@ -595,6 +645,205 @@ static void pan_timer(lv_timer_t *timer)
 
     s_step = (s_step + 1) % s_steps;
     pan_apply();
+}
+
+/*---------------------------------------------------------------------------
+ * zoom buttons + map picker menu
+ *
+ * The LTMB packages can carry several zoom levels in one file now, so the
+ * view's level table is no longer a single entry: "+" / "-" walk it and keep
+ * the centre coordinates. The picker lists every .ltb the scan found.
+ *-------------------------------------------------------------------------*/
+static void level_label_update(void)
+{
+    char buf[96];
+
+    if(mv_view_get_source(s_map) == NULL) return;
+
+    snprintf(buf, sizeof(buf), "level: z%d  L%d/%d",
+             mv_view_get_zoom(s_map),
+             mv_view_get_level(s_map) + 1,
+             mv_view_get_level_count(s_map));
+    lv_label_set_text(s_lbl_level, buf);
+}
+
+static void zoom_btn_cb(lv_event_t *e)
+{
+    bool in = (bool)(uintptr_t)lv_event_get_user_data(e);
+
+    s_user_took_over = 1;          /* buttons mean the user is driving now */
+
+    if(mv_view_get_source(s_map) == NULL) {
+        SEGGER_RTT_printf(RTT_CH, "map: zoom %s pressed but no map is loaded\n",
+                          in ? "in" : "out");
+        lv_label_set_text(s_lbl_level, "no map - cannot zoom (need v3 .ltb)");
+        return;
+    }
+
+    if(in) {
+        mv_view_zoom_in(s_map);
+    }
+    else {
+        mv_view_zoom_out(s_map);
+    }
+    level_label_update();
+    print_cache_stats();
+    SEGGER_RTT_printf(RTT_CH, "map: zoom %s -> L%d/%d z%d\n",
+                      in ? "in" : "out",
+                      mv_view_get_level(s_map) + 1,
+                      mv_view_get_level_count(s_map),
+                      mv_view_get_zoom(s_map));
+}
+
+static void menu_open(bool show)
+{
+    if(s_menu == NULL) return;
+
+    if(show) {
+        menu_rebuild();            /* pick up maps scanned after boot */
+        lv_obj_remove_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_menu);
+    }
+    else {
+        lv_obj_add_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
+    }
+    SEGGER_RTT_printf(RTT_CH, "map: menu %s\n", show ? "open" : "close");
+}
+
+static void menu_btn_cb(lv_event_t *e)
+{
+    (void)e;
+    SEGGER_RTT_printf(RTT_CH, "map: MAPS clicked\n");
+    menu_open(lv_obj_has_flag(s_menu, LV_OBJ_FLAG_HIDDEN));
+}
+
+static void menu_close_cb(lv_event_t *e)
+{
+    (void)e;
+    menu_open(false);
+}
+
+static void mirror_btn_cb(lv_event_t *e)
+{
+    int mx, my;
+
+    (void)e;
+    board_touch_get_mirror(&mx, &my);
+
+    /* 00 -> 01 -> 10 -> 11 -> 00，点着试，红点跟手就对了 */
+    if(!mx && my)        { mx = 1; my = 0; }
+    else if(mx && !my)   { mx = 1; my = 1; }
+    else if(mx && my)    { mx = 0; my = 0; }
+    else                 { mx = 0; my = 1; }
+
+    board_touch_set_mirror(mx, my);
+}
+
+static void menu_pick_cb(lv_event_t *e)
+{
+    int index = (int)(uintptr_t)lv_event_get_user_data(e);
+
+    menu_open(false);
+    if(index < 0 || index >= s_map_count) return;
+
+    SEGGER_RTT_printf(RTT_CH, "map: pick %d (%s)\n", index, s_maps[index].label);
+    s_user_took_over = 1;          /* chosen by hand: no more auto-pan */
+    s_map_index = index;
+    map_open(index);
+}
+
+/* one list row per .ltb found in sd:/maps */
+static void menu_rebuild(void)
+{
+    int i;
+    char buf[64];
+
+    if(s_menu_list == NULL) return;
+
+    lv_obj_clean(s_menu_list);
+
+    if(s_map_count == 0) {
+        lv_obj_t *lbl = lv_label_create(s_menu_list);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x8fa0b3), 0);
+        lv_label_set_text(lbl, "no .ltb in sd:/maps");
+        return;
+    }
+
+    for(i = 0; i < s_map_count; i++) {
+        lv_obj_t *btn = lv_button_create(s_menu_list);
+        lv_obj_set_size(btn, MAP_MENU_W - 40, 44);
+        lv_obj_set_style_bg_color(btn, (i == s_map_index) ? lv_color_hex(0x1c6dd0)
+                                                          : lv_color_hex(0x1a2c44), 0);
+        lv_obj_set_style_radius(btn, 8, 0);
+
+        snprintf(buf, sizeof(buf), "%d  %s", i + 1, s_maps[i].label);
+
+        lv_obj_t *lbl = lv_label_create(btn);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0xe6edf3), 0);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+        lv_obj_set_width(lbl, MAP_MENU_W - 60);
+        lv_label_set_text(lbl, buf);
+        lv_obj_center(lbl);
+
+        /* the row index rides in user_data */
+        lv_obj_add_event_cb(btn, menu_pick_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+    }
+}
+
+/*---------------------------------------------------------------------------
+ * touch probe
+ *
+ * 把 LVGL 实际收到的坐标画出来：红点不跟手 = 镜像方向错了（菜单里 FLIP
+ * 按钮可现场切换），点按钮没反应 = CLICKED 没发或点到了别处。
+ *-------------------------------------------------------------------------*/
+static void touch_probe_timer(lv_timer_t *t)
+{
+    lv_indev_t *indev = NULL;
+    lv_point_t p;
+    bool down;
+    char buf[48];
+    static int32_t last_x = -1, last_y = -1;
+
+    (void)t;
+    while((indev = lv_indev_get_next(indev)) != NULL) {
+        if(lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) break;
+    }
+    if(indev == NULL || s_touch_dot == NULL) return;
+
+    lv_indev_get_point(indev, &p);
+    down = (lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED);
+
+    if(down) {
+        s_touch_last_ms = lv_tick_get();
+        if(!s_touch_was_down) {
+            SEGGER_RTT_printf(RTT_CH, "map: LVGL PRESSED at %d,%d\n", (int)p.x, (int)p.y);
+            s_touch_was_down = true;
+            lv_obj_move_foreground(s_touch_dot);
+            lv_obj_move_foreground(s_touch_lbl);
+        }
+        if(p.x != last_x || p.y != last_y) {
+            last_x = p.x;
+            last_y = p.y;
+            lv_obj_set_pos(s_touch_dot, p.x - 7, p.y - 7);
+            snprintf(buf, sizeof(buf), "touch %3d,%3d", (int)p.x, (int)p.y);
+            lv_label_set_text(s_touch_lbl, buf);
+        }
+        lv_obj_remove_flag(s_touch_dot, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(s_touch_lbl, LV_OBJ_FLAG_HIDDEN);
+    }
+    else {
+        if(s_touch_was_down) {
+            SEGGER_RTT_printf(RTT_CH, "map: LVGL RELEASED at %d,%d\n", (int)p.x, (int)p.y);
+            s_touch_was_down = false;
+        }
+        /* 松手后留 3 秒，便于看清最后一次落点 */
+        if(lv_tick_get() - s_touch_last_ms > 3000) {
+            lv_obj_add_flag(s_touch_dot, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_touch_lbl, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 }
 
 /*---------------------------------------------------------------------------
@@ -683,6 +932,112 @@ void map_demo_create(void)
     lv_label_set_text(s_lbl_bounds2, "");
     lv_label_set_text(s_lbl_view, "view: -");
 
+    /* zoom buttons: bottom-right corner, above the debug overlay */
+    s_btn_zoom_in = lv_button_create(scr);
+    lv_obj_set_size(s_btn_zoom_in, MAP_BTN_SIZE, MAP_BTN_SIZE);
+    lv_obj_align(s_btn_zoom_in, LV_ALIGN_BOTTOM_RIGHT, -20, -20);
+    lv_obj_set_style_bg_color(s_btn_zoom_in, lv_color_hex(0x1c6dd0), 0);
+    lv_obj_set_style_radius(s_btn_zoom_in, 12, 0);
+    lv_obj_add_event_cb(s_btn_zoom_in, zoom_btn_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)true);
+    lv_obj_t *zi = lv_label_create(s_btn_zoom_in);
+    lv_obj_set_style_text_font(zi, &lv_font_montserrat_24, 0);
+    lv_label_set_text(zi, "+");
+    lv_obj_center(zi);
+
+    s_btn_zoom_out = lv_button_create(scr);
+    lv_obj_set_size(s_btn_zoom_out, MAP_BTN_SIZE, MAP_BTN_SIZE);
+    lv_obj_align(s_btn_zoom_out, LV_ALIGN_BOTTOM_RIGHT, -20, -20 - MAP_BTN_SIZE - 12);
+    lv_obj_set_style_bg_color(s_btn_zoom_out, lv_color_hex(0x1c6dd0), 0);
+    lv_obj_set_style_radius(s_btn_zoom_out, 12, 0);
+    lv_obj_add_event_cb(s_btn_zoom_out, zoom_btn_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)false);
+    lv_obj_t *zo = lv_label_create(s_btn_zoom_out);
+    lv_obj_set_style_text_font(zo, &lv_font_montserrat_24, 0);
+    lv_label_set_text(zo, "-");
+    lv_obj_center(zo);
+
+    /* "MAPS" button: top-left, opens the map picker */
+    s_btn_menu = lv_button_create(scr);
+    lv_obj_set_size(s_btn_menu, 96, 44);
+    lv_obj_align(s_btn_menu, LV_ALIGN_TOP_LEFT, 20, 20);
+    lv_obj_set_style_bg_color(s_btn_menu, lv_color_hex(0x1c6dd0), 0);
+    lv_obj_set_style_bg_opa(s_btn_menu, LV_OPA_80, 0);
+    lv_obj_set_style_radius(s_btn_menu, 10, 0);
+    lv_obj_add_event_cb(s_btn_menu, menu_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *ml = lv_label_create(s_btn_menu);
+    lv_obj_set_style_text_font(ml, &lv_font_montserrat_20, 0);
+    lv_label_set_text(ml, "MAPS");
+    lv_obj_center(ml);
+
+    /* map picker panel: hidden until MAPS is tapped */
+    s_menu = lv_obj_create(scr);
+    lv_obj_set_size(s_menu, MAP_MENU_W, MAP_MENU_H);
+    lv_obj_align(s_menu, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(s_menu, lv_color_hex(0x0b1626), 0);
+    lv_obj_set_style_bg_opa(s_menu, LV_OPA_90, 0);
+    lv_obj_set_style_border_color(s_menu, lv_color_hex(0x1c6dd0), 0);
+    lv_obj_set_style_border_width(s_menu, 1, 0);
+    lv_obj_set_style_radius(s_menu, 12, 0);
+    lv_obj_set_style_pad_all(s_menu, 12, 0);
+    lv_obj_add_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(s_menu, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *mtitle = lv_label_create(s_menu);
+    lv_obj_set_style_text_font(mtitle, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(mtitle, lv_color_hex(0xe6edf3), 0);
+    lv_label_set_text(mtitle, "Select map (sd:/maps)");
+    lv_obj_align(mtitle, LV_ALIGN_TOP_LEFT, 4, 4);
+
+    lv_obj_t *mclose = lv_button_create(s_menu);
+    lv_obj_set_size(mclose, 44, 32);
+    lv_obj_align(mclose, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(mclose, lv_color_hex(0x33415c), 0);
+    lv_obj_set_style_radius(mclose, 8, 0);
+    lv_obj_add_event_cb(mclose, menu_close_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *mx = lv_label_create(mclose);
+    lv_label_set_text(mx, "X");
+    lv_obj_center(mx);
+
+    /* 现场切换触摸 X/Y 镜像（00/01/10/11 循环），红点跟手就停 */
+    lv_obj_t *mflip = lv_button_create(s_menu);
+    lv_obj_set_size(mflip, 76, 32);
+    lv_obj_align(mflip, LV_ALIGN_TOP_RIGHT, -52, 0);
+    lv_obj_set_style_bg_color(mflip, lv_color_hex(0x33415c), 0);
+    lv_obj_set_style_radius(mflip, 8, 0);
+    lv_obj_add_event_cb(mflip, mirror_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *mfl = lv_label_create(mflip);
+    lv_label_set_text(mfl, "FLIP");
+    lv_obj_center(mfl);
+
+    /* scrollable list below the title row */
+    s_menu_list = lv_obj_create(s_menu);
+    lv_obj_set_size(s_menu_list, MAP_MENU_W - 24, MAP_MENU_H - 56);
+    lv_obj_align(s_menu_list, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_opa(s_menu_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_menu_list, 0, 0);
+    lv_obj_set_style_pad_all(s_menu_list, 4, 0);
+    lv_obj_set_flex_flow(s_menu_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_menu_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(s_menu_list, 8, 0);
+
+    /* touch probe: sits above everything but is NOT clickable, so it can
+     * never steal a press from the buttons */
+    s_touch_dot = lv_obj_create(scr);
+    lv_obj_set_size(s_touch_dot, 14, 14);
+    lv_obj_set_style_radius(s_touch_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_touch_dot, lv_color_hex(0xff3b30), 0);
+    lv_obj_set_style_border_width(s_touch_dot, 0, 0);
+    lv_obj_set_style_pad_all(s_touch_dot, 0, 0);
+    lv_obj_clear_flag(s_touch_dot, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_touch_dot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_touch_dot, LV_OBJ_FLAG_HIDDEN);
+
+    s_touch_lbl = lv_label_create(scr);
+    lv_obj_set_style_text_font(s_touch_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_touch_lbl, lv_color_hex(0xff8a80), 0);
+    lv_label_set_text(s_touch_lbl, "touch");
+    lv_obj_align(s_touch_lbl, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+    lv_obj_add_flag(s_touch_lbl, LV_OBJ_FLAG_HIDDEN);
+
     lv_screen_load(scr);
 
     if(maps_scan() > 0) {
@@ -700,4 +1055,5 @@ void map_demo_create(void)
     }
 
     lv_timer_create(pan_timer, MAP_PAN_MS, NULL);
+    lv_timer_create(touch_probe_timer, 30, NULL);
 }

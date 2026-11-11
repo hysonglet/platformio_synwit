@@ -14,6 +14,10 @@
 int  board_touch_init(void);                              /* 0 = ok */
 void board_touch_read(int16_t *x, int16_t *y, int *pressed);
 
+/* 运行期校准：板子镜像方向不对时不用重编译，直接在 UI 里切换 */
+void board_touch_set_mirror(int mirror_x, int mirror_y);
+void board_touch_get_mirror(int *mirror_x, int *mirror_y);
+
 /* LVGL pointer input device fed by board_touch_read() */
 void lv_port_indev_init(void);
 

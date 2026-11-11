@@ -26,7 +26,10 @@
 #define GTP_STATUS    0x814E
 #define GTP_TP1       0x8150
 
-/* Panel orientation: if the pointer moves the wrong way, flip these. */
+/* Panel orientation: if the pointer moves the wrong way, flip these.
+ * Measured on the 5" 800x480 board: GT911 Y already matches the LCD scan
+ * direction. Mirroring Y (as Synwit's old demo did) turns the touch upside
+ * down - every press lands on the opposite half of the screen. */
 #ifndef TOUCH_SWAP_XY
 #define TOUCH_SWAP_XY   0
 #endif
@@ -34,7 +37,7 @@
 #define TOUCH_MIRROR_X  0
 #endif
 #ifndef TOUCH_MIRROR_Y
-#define TOUCH_MIRROR_Y  1     /* Synwit's demo mirrors Y as well */
+#define TOUCH_MIRROR_Y  0
 #endif
 
 typedef struct {
@@ -60,11 +63,28 @@ static const tp_bus_t s_buses[] = {
     { I2C0, PORTN, PIN5, PORTN_PIN5_I2C0_SCL, PORTN, PIN4, PORTN_PIN4_I2C0_SDA, "I2C0 PN5/PN4" },
 };
 
+/* 松手后 GT911 有些固件不再产生新数据帧，200 ms 没新帧就强制上报释放，
+ * 否则 LVGL 收不到 RELEASED，按钮的 LV_EVENT_CLICKED 永远不会触发。 */
+#define TP_RELEASE_TIMEOUT_MS 200
+
 static int      s_ready;
 static I2C_TypeDef *s_i2c = I2C1;
 static uint8_t  s_addr = 0x5D;
 static int16_t  s_last_x;
 static int16_t  s_last_y;
+static int      s_down;            /* 稳定的按下状态 */
+static uint32_t s_last_frame_ms;   /* 最近一次 GT911 有效数据帧 */
+static int      s_mirror_x = TOUCH_MIRROR_X;
+static int      s_mirror_y = TOUCH_MIRROR_Y;
+
+static void set_down(int down, int16_t x, int16_t y)
+{
+    if(down != s_down) {
+        SEGGER_RTT_printf(0, "tp: %s (%d,%d)\n",
+                          down ? "down" : "up  ", (int)x, (int)y);
+        s_down = down;
+    }
+}
 
 /*---------------------------------------------------------------------------
  * I2C
@@ -228,45 +248,67 @@ void board_touch_read(int16_t *x, int16_t *y, int *pressed)
 
     *x = s_last_x;
     *y = s_last_y;
-    *pressed = 0;
 
-    if(!s_ready) return;
-
-    if(!tp_read(GTP_STATUS, &status, 1)) return;
-
-    num = status & 0x0F;
-    if(status & 0x80) {
-        tp_write(GTP_STATUS, &zero, 1);      /* clear the READY flag */
+    if(!s_ready) {
+        *pressed = 0;
+        return;
     }
 
-    if(num == 0 || num >= 6) return;         /* released, or garbage */
+    /* 0x814E 的 bit7 = 有新数据帧。原来的实现只看低 4 位的点数，
+     * 清掉 READY 后若芯片不再刷新，点数会一直是旧值 1，永远按着不放。 */
+    if(tp_read(GTP_STATUS, &status, 1) && (status & 0x80)) {
+        tp_write(GTP_STATUS, &zero, 1);      /* 必须清 READY，芯片才会给下一帧 */
+        s_last_frame_ms = board_millis();
 
-    uint8_t buf[4];
-    if(!tp_read(GTP_TP1, buf, 4)) return;
-
-    int16_t tx = (int16_t)(((uint16_t)buf[1] << 8) | buf[0]);
-    int16_t ty = (int16_t)(((uint16_t)buf[3] << 8) | buf[2]);
+        num = status & 0x0F;
+        if(num == 0 || num >= 6) {
+            set_down(0, s_last_x, s_last_y);   /* 松手那一帧 */
+        }
+        else {
+            uint8_t buf[4];
+            if(tp_read(GTP_TP1, buf, 4)) {
+                int16_t tx = (int16_t)(((uint16_t)buf[1] << 8) | buf[0]);
+                int16_t ty = (int16_t)(((uint16_t)buf[3] << 8) | buf[2]);
 
 #if TOUCH_SWAP_XY
-    int16_t t = tx; tx = ty; ty = t;
+                int16_t t = tx; tx = ty; ty = t;
 #endif
-#if TOUCH_MIRROR_X
-    tx = (int16_t)(LCD_HDOT - 1 - tx);
-#endif
-#if TOUCH_MIRROR_Y
-    ty = (int16_t)(LCD_VDOT - 1 - ty);
-#endif
+                if(s_mirror_x) tx = (int16_t)(LCD_HDOT - 1 - tx);
+                if(s_mirror_y) ty = (int16_t)(LCD_VDOT - 1 - ty);
 
-    if(tx < 0) tx = 0;
-    if(ty < 0) ty = 0;
-    if(tx >= LCD_HDOT) tx = LCD_HDOT - 1;
-    if(ty >= LCD_VDOT) ty = LCD_VDOT - 1;
+                if(tx < 0) tx = 0;
+                if(ty < 0) ty = 0;
+                if(tx >= LCD_HDOT) tx = LCD_HDOT - 1;
+                if(ty >= LCD_VDOT) ty = LCD_VDOT - 1;
 
-    s_last_x = tx;
-    s_last_y = ty;
-    *x = tx;
-    *y = ty;
-    *pressed = 1;
+                s_last_x = tx;
+                s_last_y = ty;
+                *x = tx;
+                *y = ty;
+                set_down(1, tx, ty);
+            }
+        }
+    }
+
+    /* 兜底：I2C 读失败 / 芯片松手不发帧时，也不能把 LVGL 卡在按下态 */
+    if(s_down && (board_millis() - s_last_frame_ms > TP_RELEASE_TIMEOUT_MS)) {
+        set_down(0, s_last_x, s_last_y);
+    }
+
+    *pressed = s_down;
+}
+
+void board_touch_set_mirror(int mirror_x, int mirror_y)
+{
+    s_mirror_x = mirror_x ? 1 : 0;
+    s_mirror_y = mirror_y ? 1 : 0;
+    SEGGER_RTT_printf(0, "tp: mirror X=%d Y=%d\n", s_mirror_x, s_mirror_y);
+}
+
+void board_touch_get_mirror(int *mirror_x, int *mirror_y)
+{
+    if(mirror_x != NULL) *mirror_x = s_mirror_x;
+    if(mirror_y != NULL) *mirror_y = s_mirror_y;
 }
 
 /*---------------------------------------------------------------------------
