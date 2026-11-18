@@ -51,7 +51,7 @@ The companion `framework-synwit/` sits next to `platform-synwit/` and holds `csl
 pio pkg install --global --platform https://github.com/hysonglet/platformio_synwit.git
 ```
 
-This pulls `framework-synwit@~1.0.0` from the PlatformIO registry (it must be published there).
+This also pulls the companion `framework-synwit` package from GitHub; no separate installation is needed.
 
 ### Verifying the installation
 

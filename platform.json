@@ -43,7 +43,7 @@
     "framework-synwit": {
       "type": "framework",
       "optional": true,
-      "version": "~1.0.0"
+      "version": "git+https://github.com/hysonglet/framework-synwit.git"
     },
     "tool-jlink": {
       "type": "uploader",

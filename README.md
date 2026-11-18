@@ -51,7 +51,7 @@ platform-synwit/
 pio pkg install --global --platform https://github.com/hysonglet/platformio_synwit.git
 ```
 
-这种方式会从 PlatformIO 仓库拉取 `framework-synwit@~1.0.0`（需已发布到仓库）。
+这种方式会同时从 GitHub 拉取配套的 `framework-synwit` 框架包，无需单独安装。
 
 ### 验证安装
 
